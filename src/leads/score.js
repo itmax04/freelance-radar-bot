@@ -1,7 +1,7 @@
 // Оценка потенциального заказчика 0–100: насколько вероятно, что ему нужно видео и что до него можно достучаться.
 // Страны не исключаются (решение владельца 19.10.2026). Германия и ЕС помечаются: другой канал связи (см. bestChannel).
 
-export const LEADS_PER_DAY = 10;
+export const LEADS_PER_DAY = 5; // владелец: 5–8 откликов/писем в день всего (19.10.2026)
 export const MIN_LEAD_SCORE = 35;
 
 const RECRUITER = /\b(recruit\w*|staffing|talent|career|headhunt\w*|outsourc\w*|hiring partner|pavago|growthpair|virtual assistant)\b/i;
@@ -16,6 +16,9 @@ export function scoreLead(lead, info) {
   const eu = Boolean(info.eu || lead.eu) && !germany;
   if (lead.signal === 'hiring' && RECRUITER.test(lead.company || '')) return { score: 0, reasons: ['кадровое агентство'], excluded: true };
 
+  if (/\b(agency|studio|studios|creative|ugc|production|performance|growth|media buy\w*)\b/i.test(`${lead.company} ${lead.desc || lead.descr || ''}`.slice(0, 600))) {
+    score += 10; reasons.push('агентство/студия → white-label пилот');
+  }
   if (lead.signal === 'hiring') {
     score += 35; reasons.push('уже платят за видео (вакансия)');
     if (VIDEO_ROLE.test(lead.signalText)) { score += 10; reasons.push('роль про видео/UGC'); }

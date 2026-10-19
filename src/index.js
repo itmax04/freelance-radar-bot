@@ -1,22 +1,27 @@
 // Радар заказов по видео: биржи → оценка → Telegram с готовым откликом.
-import { SOURCES } from './sources.js';
-import { scoreJob, HOT_SCORE, GOOD_SCORE, LOCAL_GOOD_SCORE, MAX_HOT_PER_DAY } from './score.js';
+import { SOURCES, fetchTelegram, DEFAULT_TG_CHANNELS } from './sources.js';
+import { scoreJob, HOT_SCORE, GOOD_SCORE, LOCAL_GOOD_SCORE, MAX_HOT_PER_DAY, HOT_CATEGORIES } from './score.js';
 import { knownIds, insertJobs, getJob, setJobFields, sentToday, getHealth, saveHealth, getSetting, getRates } from './store.js';
 import { call, sendText, escapeHtml as e } from './telegram.js';
 import { formatJob, jobKeyboard, formatDigest } from './messages.js';
 import { handleUpdate, COMMANDS, statsText, sourcesText } from './commands.js';
 import { runLeadSlot, runLeadSource, runEnrich, sendDailyLeads, sendFollowups, previewLeads } from './leads/bot.js';
+import { goalText, runDailyReminders } from './reminders.js';
 
 // Cron (UTC), см. wrangler.toml:
-//   */2 * * * *  — один источник за запуск по кругу CYCLE (Freelancer.com — каждые 4 мин, PPH и YT Jobs — каждые 10, Freelancehunt — 20)
-//   1 * * * *    — сводки (9, 13, 17, 21 по Берлину), отчёт дня (21:00), чистка базы (04:00), заказчики дня (10:00)
+//   */2 * * * *  — один источник за запуск по кругу CYCLE (16 слотов = 32 мин), см. ниже
+//   1 * * * *    — сводки (9, 13, 17, 21 по Берлину), отчёт дня (21:00), чистка базы (04:00),
+//                  заказчики дня + напоминания (10:00)
 //   */10 * * * * — поиск заказчиков (src/leads/bot.js → LEAD_CYCLE)
 const CRON_SOURCES = '*/2 * * * *';
 const CRON_HOURLY = '1 * * * *';
 const CRON_LEADS = '*/10 * * * *'; // поиск заказчиков: источник или обогащение по кругу (LEAD_CYCLE)
 const LEADS_HOUR = 10;              // подборка заказчиков и напоминания — 10:00 по Берлину
+// Приоритеты по исследованию 19.10.2026: Freelancehunt и Telegram (явные запросы) — чаще всего (каждые ~6 мин),
+// Freelancer.com (пробный Plus) — ~11 мин, YT Jobs, Twine, PeoplePerHour, Reddit — раз в 32 мин.
 // Kwork исключён: блокирует серверы Cloudflare (см. SOURCES.kwork.blocked).
-const CYCLE = ['freelancer', 'peopleperhour', 'freelancer', 'ytjobs', 'freelancer', 'freelancehunt', 'freelancer', 'ytjobs', 'freelancer', 'peopleperhour'];
+const CYCLE = ['freelancehunt', 'freelancer', 'telegram', 'freelancehunt', 'ytjobs', 'telegram', 'freelancehunt', 'freelancer',
+  'twine', 'telegram', 'freelancehunt', 'peopleperhour', 'telegram', 'freelancehunt', 'freelancer', 'reddit'];
 const DIGEST_HOURS = [9, 13, 17, 21];
 const REPORT_HOUR = 21;
 const MAX_SENDS_PER_RUN = 5;      // лимит подзапросов на запуск
@@ -25,15 +30,22 @@ const ALERT_AFTER_FAILS = 3;
 const berlinHour = (d = new Date()) =>
   Number(new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', hour: 'numeric', hourCycle: 'h23' }).format(d));
 
-function sourceForMinute(minute) {
-  return CYCLE[Math.floor(minute / 2) % CYCLE.length];
+/** Слот по номеру двухминутки с начала эпохи (60 мин не делится на 16 слотов — считаем от эпохи). */
+function slotForTime(ms) {
+  const slot = Math.floor(ms / 120000);
+  return { key: CYCLE[slot % CYCLE.length], slot };
+}
+
+async function tgChannels(env) {
+  return getSetting(env, 'tgChannels', DEFAULT_TG_CHANNELS);
 }
 
 function tierOf(s, job) {
   if (!s.relevant) return 'skip';
   if (s.flags.length) return 'low';
   if (!job.foreign) return s.score >= LOCAL_GOOD_SCORE ? 'good' : 'low'; // приоритет — иностранные: местные только в сводку
-  if (s.score >= HOT_SCORE) return 'hot';
+  if (SOURCES[job.source]?.digestOnly) return s.score >= GOOD_SCORE ? 'good' : 'low'; // PeoplePerHour: подписка — только сводка
+  if (s.score >= HOT_SCORE && HOT_CATEGORIES.includes(s.category)) return 'hot';
   if (s.score >= GOOD_SCORE) return 'good';
   return 'low';
 }
@@ -44,12 +56,19 @@ async function notify(env, text) {
 }
 
 /** Проверить один источник: новые заказы → оценка → база → мгновенные уведомления. */
-async function runSource(env, key, { dry = false } = {}) {
+async function runSource(env, key, { dry = false, slot = 0, channel = null } = {}) {
   const src = SOURCES[key];
   const health = await getHealth(env, key);
   let jobs;
   try {
-    jobs = await src.fetch();
+    if (key === 'telegram') {
+      // Один канал за запуск, по кругу.
+      const list = await tgChannels(env);
+      channel = channel || list[slot % list.length];
+      jobs = await fetchTelegram(channel);
+    } else {
+      jobs = await src.fetch();
+    }
   } catch (err) {
     health.fail_count += 1;
     health.last_error = String(err.message || err).slice(0, 200);
@@ -134,7 +153,9 @@ async function sendReport(env) {
 
 ${await sourcesText(env)}
 
-Цель — 5–10 откликов в день на 🔥 и лучшие ⭐. /top — что ещё открыто.`;
+${await goalText(env)}
+
+/top — что ещё открыто.`;
   await sendText(env, text, { disable_notification: true });
 }
 
@@ -151,14 +172,15 @@ export default {
       if (DIGEST_HOURS.includes(h)) await sendDigest(env);
       if (h === REPORT_HOUR) await sendReport(env);
       if (h === 4) await cleanup(env);
-      if (h === LEADS_HOUR) { await sendDailyLeads(env); await sendFollowups(env); }
+      if (h === LEADS_HOUR) { await sendDailyLeads(env); await sendFollowups(env); await runDailyReminders(env, date); }
       return;
     }
     if (event.cron === CRON_LEADS) {
       console.log(JSON.stringify(await runLeadSlot(env, date.getUTCMinutes())));
       return;
     }
-    const res = await runSource(env, sourceForMinute(date.getUTCMinutes()));
+    const { key, slot } = slotForTime(event.scheduledTime);
+    const res = await runSource(env, key, { slot });
     console.log(JSON.stringify({ ...res, top: undefined }));
   },
 
@@ -186,13 +208,15 @@ export default {
       if (what === 'leads:enrich') return Response.json(await runEnrich(env, Number(url.searchParams.get('n') || 2)));
       if (what === 'leads:daily') return Response.json(await sendDailyLeads(env));
       if (what === 'leads:preview') return Response.json(await previewLeads(env));
+      if (what === 'reminders') return Response.json(await runDailyReminders(env));
+      if (what === 'goal') return new Response(await goalText(env));
       if (what === 'leads:followups') return Response.json(await sendFollowups(env));
       if (what?.startsWith('leads:')) return Response.json(await runLeadSource(env, what.slice(6)));
-      const keys = what ? [what] : Object.keys(SOURCES).filter((k) => !SOURCES[k].blocked);
+      const keys = what ? [what] : Object.keys(SOURCES).filter((k) => !SOURCES[k].blocked && k !== 'telegram');
       const out = [];
       for (const k of keys) {
         if (!SOURCES[k]) { out.push({ source: k, error: 'unknown source' }); continue; }
-        out.push(await runSource(env, k, { dry }));
+        out.push(await runSource(env, k, { dry, channel: url.searchParams.get('channel') }));
       }
       return Response.json(out);
     }

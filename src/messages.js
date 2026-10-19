@@ -3,7 +3,7 @@ import { escapeHtml as e } from './telegram.js';
 import { SOURCES } from './sources.js';
 import { STATUSES } from './store.js';
 
-const ICON = { freelancer: '🟦', peopleperhour: '🟧', ytjobs: '🟥', freelancehunt: '🟨', kwork: '🟩' };
+const ICON = { freelancer: '🟦', peopleperhour: '🟧', ytjobs: '🟥', freelancehunt: '🟨', kwork: '🟩', telegram: '✈️', twine: '🟪', reddit: '👽' };
 
 export function ago(ms, now = Date.now()) {
   if (!ms) return null;
@@ -29,7 +29,9 @@ export function formatJob(row) {
   const desc = (row.descr || '').trim();
   const body = desc ? `\n<blockquote expandable>${e(desc.slice(0, 700))}${desc.length > 700 ? '…' : ''}</blockquote>` : '';
   const status = row.status && row.status !== 'new' ? `\nСтатус: ${STATUSES[row.status]?.label}` : '';
-  return `${head}\n${src} · ${facts}\n${why}${flags}${body}${status}`;
+  const note = row.source === 'telegram' ? '\nℹ️ Пиши автору поста (контакт в тексте), не админу канала. Сначала уточни: проектная ли работа и оплачивается ли первое задание.'
+    : SOURCES[row.source]?.note ? `\nℹ️ ${e(SOURCES[row.source].note)}` : '';
+  return `${head}\n${src} · ${facts}\n${why}${flags}${body}${note}${status}`;
 }
 
 export function jobKeyboard(row) {

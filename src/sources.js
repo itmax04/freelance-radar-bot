@@ -15,7 +15,7 @@ async function get(url, as = 'text') {
 
 const decode = (s) => String(s ?? '')
   .replace(/<[^>]+>/g, ' ')
-  .replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+  .replace(/&#x27;|&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&quot;/g, '"').replace(/&amp;/g, '&')
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
   .replace(/\s+/g, ' ').trim();
 
@@ -137,7 +137,7 @@ export async function fetchFreelancehunt() {
       bids: a.bid_count ?? null,
       lang: /[а-яіїєґ]/i.test(a.name || '') ? 'uk' : 'en',
       postedAt: a.published_at ? Date.parse(a.published_at) : null,
-      foreign: cur ? cur !== 'UAH' : !/[а-яіїєґ]/i.test(a.name || ''),
+      foreign: true, // по исследованию 19.10.2026 — основная биржа владельца, без штрафа «местный рынок»
       lowCompetition: false,
       tags: (a.skills || []).map((s) => s.name),
     };
@@ -199,11 +199,128 @@ export async function fetchKwork(html) {
   return out;
 }
 
+
+// ---------- Telegram: публичные каналы с заказами (веб-просмотр t.me/s/<канал>) ----------
+// Каналы из исследования 19.10.2026; владелец может добавлять свои командой /channels.
+export const DEFAULT_TG_CHANNELS = ['motionhunter', 'aivacancychannel', 'jobforukrainians', 'beejob1_ua', 'creatorskit_app'];
+// «Ищут исполнителя» против «предлагают себя» (резюме, портфолио).
+const TG_DEMAND = /(ищем|ищу (?:моушн|монтаж|видео|аниматор|дизайнер)|шукаємо|шукаю (?:моушн|монтаж|відео|аніматор|дизайнер)|требуется|потрібен|потрібна|потрібні|нужен|нужна|нужны|вакансия|ваканс\p{L}*|hiring|looking for|we need|we're looking|need an?\s|#job|#заказ|#проект|#задача|#фриланс|#freelance|#vacancy|#remote)/iu;
+const TG_SUPPLY = /(#резюме|#resume|#cv|#ищу_работу|ищу работу|шукаю роботу|open to work|available for (?:work|hire)|ищу заказы|возьму заказ|візьму замовлення|мои услуги|мої послуги)/iu;
+
+export async function fetchTelegram(channel) {
+  const html = await get(`https://t.me/s/${channel}`);
+  const out = [];
+  const blocks = html.split('<div class="tgme_widget_message_wrap');
+  for (const b of blocks.slice(1)) {
+    const post = (b.match(/data-post="([^"]+)"/) || [])[1];
+    const raw = (b.match(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/) || [])[1];
+    if (!post || !raw) continue;
+    const text = decode(raw.replace(/<br\s*\/?>/gi, '\n')).trim();
+    if (!TG_DEMAND.test(text) || TG_SUPPLY.test(text)) continue;
+    const time = (b.match(/<time[^>]+datetime="([^"]+)"/) || [])[1];
+    const contacts = [...new Set([...(raw.match(/@[A-Za-z0-9_]{4,32}/g) || []), ...(raw.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || [])])]
+      .filter((c) => c.toLowerCase() !== `@${channel}`.toLowerCase()).slice(0, 3);
+    const firstLine = text.split(/\n|(?<=[.!?])\s/)[0].replace(/^#\S+\s*/g, '').trim();
+    out.push({
+      id: `tg:${post}`,
+      source: 'telegram',
+      title: (firstLine || text).slice(0, 110),
+      url: `https://t.me/${post}`,
+      desc: text.slice(0, 1500),
+      budgetMin: null, budgetMax: null, currency: null, rate: null,
+      bids: null,
+      lang: /[іїєґ]/i.test(text) ? 'uk' : /[а-яё]/i.test(text) ? 'ru' : 'en',
+      postedAt: time ? Date.parse(time) : null,
+      foreign: true,
+      lowCompetition: false,
+      tags: [`@${channel}`, contacts.length ? `контакт: ${contacts.join(', ')}` : 'контакт — в посте'],
+    });
+  }
+  return out;
+}
+
+// ---------- Twine: креативная биржа (15 бесплатных откликов/мес), HTML общей ленты и раздела аниматоров ----------
+export async function fetchTwine() {
+  const pages = await Promise.all(['https://www.twine.net/jobs', 'https://www.twine.net/jobs/animators', 'https://www.twine.net/jobs/videographers']
+    .map((u) => get(u).catch(() => '')));
+  const seen = new Set();
+  const out = [];
+  for (const html of pages) {
+    for (const m of html.matchAll(/href="\/projects\/([a-z0-9]+)-([^"?#]+)"[^>]*>([^<]{3,200})<\/a>/g)) {
+      const [, id, slug, rawTitle] = m;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const before = decode(html.slice(Math.max(0, m.index - 1500), m.index)).slice(-300);
+      const after = decode(html.slice(m.index, m.index + 3000).replace(/<[^>]+>/g, ' | ')).replace(/(\|\s*)+/g, '| ');
+      const parts = after.split('|').map((x) => x.trim()).filter(Boolean);
+      const desc = parts.find((x) => x.length > 80) || '';
+      const ago = before.match(/Posted (today|(\d+) days? ago)/);
+      const money = after.match(/[£$€]\s?[\d,.]+(?:\s?[-–]\s?[£$€]?\s?[\d,.]+)?/);
+      const nums = money ? money[0].replace(/[£$€\s,]/g, '').split(/[-–]/).map(Number) : [];
+      out.push({
+        id: `tw:${id}`,
+        source: 'twine',
+        title: decode(rawTitle),
+        url: `https://www.twine.net/projects/${id}-${slug}`,
+        desc: desc.slice(0, 1200),
+        budgetMin: nums[0] ?? null, budgetMax: nums[1] ?? nums[0] ?? null,
+        currency: money ? { '£': 'GBP', $: 'USD', '€': 'EUR' }[money[0][0]] : null,
+        rate: money ? 'fixed' : null,
+        bids: null,
+        lang: 'en',
+        postedAt: ago ? Date.now() - (ago[1] === 'today' ? 0 : Number(ago[2]) * 86400e3) : null,
+        foreign: true,
+        lowCompetition: false,
+        tags: [parts[1] && parts[1].slice(0, 60), /Remote/.test(after.slice(0, 600)) && 'Remote'].filter(Boolean),
+      });
+    }
+  }
+  return out;
+}
+
+// ---------- Reddit: разделы найма (RSS); только посты [Hiring]. Reddit часто отвечает 429 — проверяем редко ----------
+export const REDDIT_SUBS = ['HireAnEditor', 'VideoEditors_forhire', 'VideoEditingRequests'];
+export async function fetchReddit() {
+  const out = [];
+  let ok = 0;
+  let lastErr = null;
+  for (const sub of REDDIT_SUBS) {
+    let xml;
+    try { xml = await get(`https://www.reddit.com/r/${sub}/new/.rss`); ok++; } catch (err) { lastErr = err; continue; }
+    for (const m of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+      const e = m[1];
+      const title = decode((e.match(/<title>([\s\S]*?)<\/title>/) || [])[1]);
+      if (!/\[(hiring|paid|task|request)\]|\bhiring\b|\bpaid\b|looking for/i.test(title) || /\[(for hire|offer|available)\]|for hire/i.test(title)) continue;
+      const link = (e.match(/<link href="([^"]+)"/) || [])[1];
+      const id = (e.match(/<id>([^<]+)<\/id>/) || [])[1] || link;
+      const updated = (e.match(/<updated>([^<]+)/) || [])[1];
+      const content = decode(decode((e.match(/<content type="html">([\s\S]*?)<\/content>/) || [])[1])).slice(0, 1500);
+      out.push({
+        id: `rd:${id.replace(/^t3_/, '')}`,
+        source: 'reddit',
+        title,
+        url: link,
+        desc: content,
+        budgetMin: null, budgetMax: null, currency: null, rate: null,
+        bids: null, lang: 'en',
+        postedAt: updated ? Date.parse(updated) : null,
+        foreign: true, lowCompetition: false,
+        tags: [`r/${sub}`],
+      });
+    }
+  }
+  if (!ok && lastErr) throw lastErr;
+  return out;
+}
+
 export const SOURCES = {
-  freelancer: { name: 'Freelancer.com', fetch: fetchFreelancer, foreign: true },
-  peopleperhour: { name: 'PeoplePerHour', fetch: fetchPeoplePerHour, foreign: true },
+  freelancer: { name: 'Freelancer.com', fetch: fetchFreelancer, foreign: true, note: 'ставки — через пробный Plus (отменить до 18.11)' },
+  peopleperhour: { name: 'PeoplePerHour', fetch: fetchPeoplePerHour, foreign: true, digestOnly: true, note: 'отклики могут требовать подписку — используй только бесплатные' },
   ytjobs: { name: 'YT Jobs', fetch: fetchYtJobs, foreign: true },
-  freelancehunt: { name: 'Freelancehunt', fetch: fetchFreelancehunt, foreign: false },
+  freelancehunt: { name: 'Freelancehunt', fetch: fetchFreelancehunt, foreign: true },
+  telegram: { name: 'Telegram-каналы', fetch: null, foreign: true }, // вызывается по каналу: fetchTelegram(channel)
+  twine: { name: 'Twine', fetch: fetchTwine, foreign: true, note: '15 бесплатных откликов в месяц — откликайся только на лучшие' },
+  reddit: { name: 'Reddit (найм)', fetch: fetchReddit, foreign: true },
   // Kwork (19.10.2026): на запросы из Cloudflare отдаёт пустую страницу (защита от ботов) — не обходим, в CYCLE нет.
   kwork: { name: 'Kwork', fetch: fetchKwork, foreign: false, blocked: 'пустая страница для серверов Cloudflare (защита от ботов)' },
 };

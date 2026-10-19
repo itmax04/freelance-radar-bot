@@ -9,6 +9,7 @@ import {
 } from './store.js';
 import { call, sendText, escapeHtml as e } from '../telegram.js';
 import { getSetting } from '../store.js';
+import { queueRepeat } from '../reminders.js';
 
 // Cron */10: по кругу — источник или обогащение (по 2 лида: сайт + контакты = до 3 запросов на лид).
 export const LEAD_CYCLE = ['producthunt', 'enrich', 'hiring', 'enrich', 'showhn', 'enrich'];
@@ -76,7 +77,7 @@ ${links}${usNote}${status}`;
 export function leadKeyboard(l, { demo = false } = {}) {
   const mark = (s) => (l.status === s ? '✅ ' : '') + LEAD_STATUSES[s].label;
   const rows = [[{ text: '✍️ Письмо', callback_data: `le:${l.n}` }, { text: '💬 Коротко (форма/DM)', callback_data: `lm:${l.n}` }]];
-  if (demo) rows.push([{ text: '🎬 Идея бесплатного демо', callback_data: `lv:${l.n}` }]);
+  if (demo) rows.push([{ text: '🎬 Идея вариации для письма', callback_data: `lv:${l.n}` }]);
   rows.push([{ text: mark('contacted'), callback_data: `lt:contacted:${l.n}` }, { text: mark('replied'), callback_data: `lt:replied:${l.n}` }]);
   rows.push([{ text: mark('won'), callback_data: `lt:won:${l.n}` }, { text: mark('skip'), callback_data: `lt:skip:${l.n}` }]);
   return { inline_keyboard: rows };
@@ -89,7 +90,7 @@ export async function sendDailyLeads(env, n = LEADS_PER_DAY) {
     await sendText(env, '🔭 Новых подходящих заказчиков сегодня нет — источники проверяются каждый час.', { disable_notification: true });
     return { leads: 0 };
   }
-  await sendText(env, `🔭 <b>Заказчики дня: ${leads.length}</b>\nКому может быть нужно видео прямо сейчас. Нажми ✍️ — бот напишет письмо под компанию; отправляешь ты. Для 🎬 первых трёх — идея бесплатного демо-ролика.`);
+  await sendText(env, `🔭 <b>Заказчики дня: ${leads.length}</b>\nКому может быть нужно видео прямо сейчас. Нажми ✍️ — бот напишет письмо под компанию; отправляешь ты. Для 🎬 первых трёх — идея вариации, которую можно описать в письме (бесплатно не делаем — предлагаем оплаченный пилот).`);
   for (const [i, l] of leads.entries()) {
     const r = await call(env, 'sendMessage', { text: formatLead(l, i + 1), reply_markup: leadKeyboard(l, { demo: i < DEMO_FOR_TOP }), link_preview_options: { is_disabled: true }, disable_notification: i > 0 });
     await setLeadFields(env, l.n, { sent: 1, msg_id: r.result.message_id });
@@ -118,6 +119,7 @@ export async function handleLeadCallback(env, q, kind, rest) {
     if (!LEAD_STATUSES[status]) { await answer('?'); return true; }
     const l = await toggleLeadStatus(env, n, status);
     if (!l) { await answer('Не найдено'); return true; }
+    if (l.status === 'won') await queueRepeat(env, { kind: 'lead', id: String(l.n), title: l.company });
     await answer(l.status === 'new' ? 'Статус снят' : LEAD_STATUSES[status].label);
     if (q.message?.text && l.msg_id === q.message.message_id) {
       await call(env, 'editMessageText', { message_id: q.message.message_id, text: formatLead(l), reply_markup: leadKeyboard(l), link_preview_options: { is_disabled: true } }).catch(() => {});
@@ -131,7 +133,7 @@ export async function handleLeadCallback(env, q, kind, rest) {
   await answer('Пишу…');
   const reply = { reply_parameters: { message_id: q.message.message_id, allow_sending_without_reply: true } };
   if (kind === 'le') {
-    const d = await draftEmail(env, l, { offerDemo: l.score >= 60 });
+    const d = await draftEmail(env, l);
     const to = l.emails ? l.emails.split(',')[0] : null;
     await sendText(env, `✍️ <b>Письмо для ${e(l.company)}</b>${d.ai ? '' : ' (шаблон)'} — нажми на текст, чтобы скопировать, проверь факты:\n<pre>${e(d.text)}</pre>${to ? `\nКому: <code>${e(to)}</code>` : ''}\nПосле отправки нажми ✉️ Написал.`, reply);
   } else if (kind === 'lm') {
@@ -139,7 +141,7 @@ export async function handleLeadCallback(env, q, kind, rest) {
     await sendText(env, `💬 <b>Короткое сообщение для ${e(l.company)}</b>${d.ai ? '' : ' (шаблон)'}:\n<pre>${e(d.text)}</pre>\n${e(l.channel || '')}`, reply);
   } else if (kind === 'lv') {
     const d = await draftDemo(env, l);
-    await sendText(env, `🎬 <b>Демо для ${e(l.company)}</b>${d.ai ? '' : ' (шаблон)'}\n<pre>${e(d.text)}</pre>\nСделай 5–10 с, отправь вместе с письмом — это сильнее любого текста.`, reply);
+    await sendText(env, `🎬 <b>Демо для ${e(l.company)}</b>${d.ai ? '' : ' (шаблон)'}\n<pre>${e(d.text)}</pre>\nОпиши идею в письме одной фразой и предложи её как оплаченный пилот — бесплатно не делаем (исследование: бесплатные тесты съедают время на оплачиваемую работу).`, reply);
   }
   return true;
 }

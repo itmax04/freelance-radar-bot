@@ -1,11 +1,13 @@
 // Команды и кнопки Telegram (webhook).
 import { call, sendText, escapeHtml as e } from './telegram.js';
 import { SOURCES } from './sources.js';
-import { STATUSES, getJob, toggleStatus, setJobFields, getSetting, setSetting } from './store.js';
+import { STATUSES, getJob, toggleStatus, setJobFields, getSetting, setSetting, getRates } from './store.js';
 import { formatJob, jobKeyboard, formatDigest, ago } from './messages.js';
 import { buildProposal } from './proposal.js';
 import { handleLeadCallback, leadStatsText, formatLead, leadKeyboard } from './leads/bot.js';
 import { pickDaily } from './leads/store.js';
+import { goalText, queueRepeat } from './reminders.js';
+import { DEFAULT_TG_CHANNELS } from './sources.js';
 
 export const COMMANDS = [
   { command: 'top', description: 'Лучшие открытые заказы за 2 дня' },
@@ -14,22 +16,25 @@ export const COMMANDS = [
   { command: 'min', description: 'Мин. бюджет для мгновенных: /min 50' },
   { command: 'mute', description: 'Пауза/возобновление мгновенных уведомлений' },
   { command: 'sources', description: 'Состояние источников' },
+  { command: 'goal', description: 'Цель: 3 оплаченных проекта до 18.11' },
+  { command: 'channels', description: 'Telegram-каналы: /channels add @name' },
   { command: 'help', description: 'Как пользоваться' },
 ];
 
 const HELP = `<b>Радар заказов по видео</b>
-Бот каждые несколько минут проверяет Freelancer.com, PeoplePerHour, YT Jobs (иностранные заказчики — в приоритете) и Freelancehunt. Kwork закрыт для серверов Cloudflare — отключён.
+Источники: Freelancehunt, Telegram-каналы, Freelancer.com, YT Jobs, Twine, Reddit (найм), PeoplePerHour (только сводка).
+Сверху — то, что лучше всего совпадает с портфолио: хуки и вариации, AI-presenter/UGC, промо приложений (исследование 19.10).
 
-🔥 — сильный заказ, приходит сразу. ⭐ — хороший, попадает в сводку (9:00, 13:00, 17:00, 21:00).
-Под заказом: <b>✍️ Отклик</b> — готовый текст (копируется нажатием), дальше отмечай ✉️ → 💬 → 🏆 или ❌.
-Бот сам ничего не отправляет заказчикам — откликаешься ты.
+🔥 — сильный заказ, приходит сразу (до 8 в день). ⭐ — в сводке (9:00, 13:00, 17:00, 21:00). ⚠ — неудобные условия.
+<b>✍️ Отклик</b> — готовый текст: ближайшая работа по прямой ссылке, оплаченный пилот с ценой и объёмом, один вопрос.
+Отмечай ✉️ → 💬 → 🏆 или ❌. Бот сам ничего не отправляет.
 
 /top — лучшие открытые заказы
-/leads — потенциальные заказчики: кому может быть нужно видео (подборка каждый день в 10:00)
+/leads — потенциальные заказчики (подборка в 10:00)
+/goal — цель: 3 оплаченных проекта до 18.11
 /stats — где реально отвечают и нанимают
-/min 50 — мгновенно присылать только с бюджетом от $50
-/mute — пауза мгновенных уведомлений (сводки остаются)
-/sources — здоровье источников`;
+/channels — Telegram-каналы (добавить: /channels add @name)
+/min 50 · /mute · /sources`;
 
 export async function handleUpdate(env, update) {
   if (update.callback_query) return handleCallback(env, update.callback_query);
@@ -41,6 +46,22 @@ export async function handleUpdate(env, update) {
     case '/help': return sendText(env, HELP);
     case '/top': return sendTop(env);
     case '/stats': return sendText(env, `${await statsText(env)}\n\n${await leadStatsText(env)}`);
+    case '/goal': return sendText(env, await goalText(env));
+    case '/channels': {
+      const list = await getSetting(env, 'tgChannels', DEFAULT_TG_CHANNELS);
+      const name = String(args[1] || '').replace(/^@|^https?:\/\/t\.me\/(s\/)?/i, '').replace(/\/.*$/, '');
+      if (args[0] === 'add' && /^[A-Za-z0-9_]{4,32}$/.test(name)) {
+        if (!list.includes(name)) list.push(name);
+        await setSetting(env, 'tgChannels', list);
+        return sendText(env, `Добавил @${name}. Каналы: ${list.map((c) => '@' + c).join(', ')}`);
+      }
+      if (['remove', 'del'].includes(args[0]) && list.includes(name)) {
+        const next = list.filter((c) => c !== name);
+        await setSetting(env, 'tgChannels', next);
+        return sendText(env, `Убрал @${name}. Каналы: ${next.map((c) => '@' + c).join(', ')}`);
+      }
+      return sendText(env, `Telegram-каналы (проверяю по одному каждые ~6 мин, только посты «ищем исполнителя»):\n${list.map((c) => '@' + c).join('\n')}\n\nДобавить: /channels add @name · убрать: /channels remove @name\nКанал должен быть публичным (открываться на t.me/s/name).`);
+    }
     case '/leads': {
       const leads = await pickDaily(env, 5, 0);
       if (!leads.length) return sendText(env, 'Новых заказчиков пока нет — источники проверяются каждый час, подборка в 10:00.');
@@ -75,7 +96,7 @@ async function handleCallback(env, q) {
   if (kind === 'p') {
     const job = await getJob(env, rest.join(':'));
     if (!job) return answer('Заказ уже удалён из базы');
-    const text = buildProposal({ ...job, desc: job.descr, foreign: Boolean(job.foreign_client) }, { category: job.category, score: job.score });
+    const text = buildProposal({ ...job, desc: job.descr, foreign: Boolean(job.foreign_client) }, { category: job.category, rates: await getRates(env) });
     await answer('Отклик готов');
     return sendText(env, `✍️ <b>Отклик</b> — нажми на текст, чтобы скопировать, поправь под заказ:\n<pre>${e(text)}</pre>\n<a href="${e(job.url)}">Открыть заказ</a>, затем отметь ✉️ Откликнулся.`, {
       reply_parameters: { message_id: q.message.message_id, allow_sending_without_reply: true },
@@ -87,6 +108,7 @@ async function handleCallback(env, q) {
     if (!STATUSES[status]) return answer('?');
     const job = await toggleStatus(env, idParts.join(':'), status);
     if (!job) return answer('Заказ не найден');
+    if (job.status === 'won') await queueRepeat(env, { kind: 'job', id: job.id, title: job.title });
     await answer(job.status === 'new' ? 'Статус снят' : STATUSES[status].label);
     return call(env, 'editMessageText', {
       message_id: q.message.message_id, text: formatJob(job), reply_markup: jobKeyboard(job), link_preview_options: { is_disabled: true },

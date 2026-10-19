@@ -1,7 +1,7 @@
 // Локальная проверка: все источники + оценка, без Telegram и D1.
 // npm run check            — все источники
 // node scripts/check.js kwork — один источник
-import { SOURCES } from '../src/sources.js';
+import { SOURCES, fetchTelegram, DEFAULT_TG_CHANNELS } from '../src/sources.js';
 import { scoreJob, HOT_SCORE, GOOD_SCORE } from '../src/score.js';
 import { buildProposal } from '../src/proposal.js';
 
@@ -13,6 +13,8 @@ const only = process.argv[2];
 let example = null;
 for (const [key, src] of Object.entries(SOURCES)) {
   if (only && key !== only) continue;
+  if (src.blocked) { console.log(`\n⛔ ${src.name}: ${src.blocked}`); continue; }
+  if (key === 'telegram') src.fetch = async () => (await Promise.all(DEFAULT_TG_CHANNELS.map((c) => fetchTelegram(c).catch(() => [])))).flat();
   const t0 = performance.now();
   let jobs;
   try { jobs = await src.fetch(); } catch (err) { console.log(`\n✘ ${src.name}: ${err.message}`); continue; }
@@ -29,5 +31,5 @@ for (const [key, src] of Object.entries(SOURCES)) {
   if (!example && scored[0]?.s.score >= GOOD_SCORE) example = scored[0];
 }
 if (example) {
-  console.log('\n— Пример отклика —\n' + buildProposal(example.job, { category: example.s.category, score: example.s.score }));
+  console.log('\n— Пример отклика —\n' + buildProposal(example.job, { category: example.s.category, rates }));
 }
