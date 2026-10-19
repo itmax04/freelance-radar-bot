@@ -3,16 +3,21 @@ main = "src/index.js"
 compatibility_date = "2026-09-01"
 
 # Отдельный аккаунт Cloudflare (свои 5 cron, D1, лимиты) — не тот, где квартирный и iPhone-бот.
-# Время — UTC. Используется 2 из 5 cron.
+# Время — UTC. Используется 3 из 5 cron.
 #   */2 * * * *  — один источник за запуск по кругу (см. CYCLE в src/index.js)
-#   1 * * * *    — сводки 9/13/17/21, отчёт 21:00 (Берлин), чистка базы 04:00
+#   1 * * * *    — сводки 9/13/17/21, отчёт 21:00, заказчики дня 10:00 (Берлин), чистка 04:00
+#   */10 * * * * — поиск заказчиков: Product Hunt / Show HN / вакансии и обогащение сайтов (src/leads/)
 [triggers]
-crons = ["*/2 * * * *", "1 * * * *"]
+crons = ["*/2 * * * *", "1 * * * *", "*/10 * * * *"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "freelance-radar-bot"
 database_id = "64c31581-2cda-4ce7-9aaa-94b2204ec2a3"
+
+# Workers AI — письма заказчикам (бесплатный дневной лимит аккаунта; при ошибке — шаблон).
+[ai]
+binding = "AI"
 
 [observability]
 enabled = true

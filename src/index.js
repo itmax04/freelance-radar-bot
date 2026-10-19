@@ -5,12 +5,16 @@ import { knownIds, insertJobs, getJob, setJobFields, sentToday, getHealth, saveH
 import { call, sendText, escapeHtml as e } from './telegram.js';
 import { formatJob, jobKeyboard, formatDigest } from './messages.js';
 import { handleUpdate, COMMANDS, statsText, sourcesText } from './commands.js';
+import { runLeadSlot, runLeadSource, runEnrich, sendDailyLeads, sendFollowups, previewLeads } from './leads/bot.js';
 
 // Cron (UTC), см. wrangler.toml:
 //   */2 * * * *  — один источник за запуск по кругу CYCLE (Freelancer.com — каждые 4 мин, PPH и YT Jobs — каждые 10, Freelancehunt — 20)
-//   1 * * * *    — сводки (9, 13, 17, 21 по Берлину), отчёт дня (21:00), чистка базы (04:00)
+//   1 * * * *    — сводки (9, 13, 17, 21 по Берлину), отчёт дня (21:00), чистка базы (04:00), заказчики дня (10:00)
+//   */10 * * * * — поиск заказчиков (src/leads/bot.js → LEAD_CYCLE)
 const CRON_SOURCES = '*/2 * * * *';
 const CRON_HOURLY = '1 * * * *';
+const CRON_LEADS = '*/10 * * * *'; // поиск заказчиков: источник или обогащение по кругу (LEAD_CYCLE)
+const LEADS_HOUR = 10;              // подборка заказчиков и напоминания — 10:00 по Берлину
 // Kwork исключён: блокирует серверы Cloudflare (см. SOURCES.kwork.blocked).
 const CYCLE = ['freelancer', 'peopleperhour', 'freelancer', 'ytjobs', 'freelancer', 'freelancehunt', 'freelancer', 'ytjobs', 'freelancer', 'peopleperhour'];
 const DIGEST_HOURS = [9, 13, 17, 21];
@@ -147,6 +151,11 @@ export default {
       if (DIGEST_HOURS.includes(h)) await sendDigest(env);
       if (h === REPORT_HOUR) await sendReport(env);
       if (h === 4) await cleanup(env);
+      if (h === LEADS_HOUR) { await sendDailyLeads(env); await sendFollowups(env); }
+      return;
+    }
+    if (event.cron === CRON_LEADS) {
+      console.log(JSON.stringify(await runLeadSlot(env, date.getUTCMinutes())));
       return;
     }
     const res = await runSource(env, sourceForMinute(date.getUTCMinutes()));
@@ -174,6 +183,11 @@ export default {
       if (what === 'digest') return Response.json(await sendDigest(env));
       if (what === 'report') { await sendReport(env); return Response.json({ report: true }); }
       if (what === 'stats') return new Response(await statsText(env));
+      if (what === 'leads:enrich') return Response.json(await runEnrich(env, Number(url.searchParams.get('n') || 2)));
+      if (what === 'leads:daily') return Response.json(await sendDailyLeads(env));
+      if (what === 'leads:preview') return Response.json(await previewLeads(env));
+      if (what === 'leads:followups') return Response.json(await sendFollowups(env));
+      if (what?.startsWith('leads:')) return Response.json(await runLeadSource(env, what.slice(6)));
       const keys = what ? [what] : Object.keys(SOURCES).filter((k) => !SOURCES[k].blocked);
       const out = [];
       for (const k of keys) {

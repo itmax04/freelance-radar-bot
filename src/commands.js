@@ -4,9 +4,12 @@ import { SOURCES } from './sources.js';
 import { STATUSES, getJob, toggleStatus, setJobFields, getSetting, setSetting } from './store.js';
 import { formatJob, jobKeyboard, formatDigest, ago } from './messages.js';
 import { buildProposal } from './proposal.js';
+import { handleLeadCallback, leadStatsText, formatLead, leadKeyboard } from './leads/bot.js';
+import { pickDaily } from './leads/store.js';
 
 export const COMMANDS = [
   { command: 'top', description: 'Лучшие открытые заказы за 2 дня' },
+  { command: 'leads', description: 'Потенциальные заказчики (ещё не показанные)' },
   { command: 'stats', description: 'Отклики, ответы, заказы — по источникам' },
   { command: 'min', description: 'Мин. бюджет для мгновенных: /min 50' },
   { command: 'mute', description: 'Пауза/возобновление мгновенных уведомлений' },
@@ -22,6 +25,7 @@ const HELP = `<b>Радар заказов по видео</b>
 Бот сам ничего не отправляет заказчикам — откликаешься ты.
 
 /top — лучшие открытые заказы
+/leads — потенциальные заказчики: кому может быть нужно видео (подборка каждый день в 10:00)
 /stats — где реально отвечают и нанимают
 /min 50 — мгновенно присылать только с бюджетом от $50
 /mute — пауза мгновенных уведомлений (сводки остаются)
@@ -36,7 +40,16 @@ export async function handleUpdate(env, update) {
     case '/start':
     case '/help': return sendText(env, HELP);
     case '/top': return sendTop(env);
-    case '/stats': return sendText(env, await statsText(env));
+    case '/stats': return sendText(env, `${await statsText(env)}\n\n${await leadStatsText(env)}`);
+    case '/leads': {
+      const leads = await pickDaily(env, 5, 0);
+      if (!leads.length) return sendText(env, 'Новых заказчиков пока нет — источники проверяются каждый час, подборка в 10:00.');
+      for (const [i, l] of leads.entries()) {
+        const r = await call(env, 'sendMessage', { text: formatLead(l, i + 1), reply_markup: leadKeyboard(l, { demo: i < 3 }), link_preview_options: { is_disabled: true } });
+        await env.DB.prepare('UPDATE leads SET sent = 1, msg_id = ? WHERE n = ?').bind(r.result.message_id, l.n).run();
+      }
+      return;
+    }
     case '/sources': return sendText(env, await sourcesText(env));
     case '/mute': {
       const muted = !(await getSetting(env, 'muted', false));
@@ -56,6 +69,7 @@ export async function handleUpdate(env, update) {
 async function handleCallback(env, q) {
   if (String(q.message?.chat?.id) !== String(env.TELEGRAM_CHAT_ID)) return;
   const [kind, ...rest] = q.data.split(':');
+  if (await handleLeadCallback(env, q, kind, rest)) return;
   const answer = (text) => call(env, 'answerCallbackQuery', { callback_query_id: q.id, text }, { withChat: false }).catch(() => {});
 
   if (kind === 'p') {

@@ -24,12 +24,30 @@
 Бот **не откликается сам** и не обходит защиту сайтов (Guru, Workana, Mandy, Behance — 403, не подключены;
 Upwork и Fiverr закрыты для ботов).
 
+## Поиск заказчиков (src/leads/)
+
+Компании, которым может быть нужно видео, даже если они не публиковали заказ.
+
+| Шаг | Как |
+|---|---|
+| Источники | **Product Hunt** (Atom-лента запусков), **Show HN** (только продукты со своим сайтом), **вакансии** на видео/UGC/контент (Himalayas — поиск по 6 запросам, RemoteOK). Kickstarter, Indiegogo, LaunchingNext, страницы компаний Himalayas — 403, не используются |
+| Исключаем | **весь ЕС и Германию** (холодные письма без согласия запрещены, UWG §7; владелец не работает на ЕС): по стране вакансии, правовой форме (GmbH, UG, B.V.…), домену, Impressum; кадровые агентства |
+| Обогащение | сайт → описание, **публичные адреса только на домене компании**, форма связи, X/LinkedIn/Instagram, есть ли видео, страна (Inc./LLC/Ltd/Pty), тип: B2C (UGC) / B2B (демо, эксплейнер) |
+| Оценка 0–100 | вакансия на видео +35, запуск PH +25 (Show HN +5), нет видео на сайте +15, B2C +15 / B2B +8, есть почта +12 / форма +6, US/UK/CA/AU +8 |
+| Канал | вакансия → отклик на неё; почта; форма; DM в X/LinkedIn. **США + почта:** по CAN-SPAM в письме нужен почтовый адрес отправителя → бот советует форму/DM |
+| Подборка | каждый день в 10:00 (Берлин) — 10 лучших карточками; `/leads` — сейчас |
+| Черновики | ✍️ письмо, 💬 коротко (форма/DM), 🎬 идея бесплатного демо (концепт + промпт для Kling/Veo/Sora) — пишет **Workers AI** (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, бесплатный лимит), при ошибке шаблон |
+| Воронка | ✉️ Написал → через 4 дня один текст напоминания → 💬 / 🏆 / ❌; `/stats` |
+
+Бот **ничего не отправляет заказчикам** — только готовит текст.
+
 ## Расписание (UTC)
 
 ```
 */2 * * * *  → один источник за запуск: CYCLE = fl, pph, fl, ytj, fl, fh, fl, ytj, fl, pph
                (Freelancer.com — каждые 4 мин, PPH и YT Jobs — каждые 10, Freelancehunt — 20)
-1 * * * *    → сводки, отчёт 21:00, чистка 04:00 (по Берлину)
+1 * * * *    → сводки, отчёт 21:00, заказчики дня 10:00, чистка 04:00 (по Берлину)
+*/10 * * * * → заказчики: LEAD_CYCLE = producthunt, enrich, hiring, enrich, showhn, enrich
 ```
 
 ## Карта файлов
@@ -42,7 +60,8 @@ src/proposal.js  тексты откликов (en/ru/uk) и подбор раб
 src/messages.js  карточка заказа, кнопки, сводка
 src/commands.js  команды и кнопки Telegram, /stats, /sources
 src/store.js     D1: заказы, статусы, здоровье, настройки, курсы НБУ (кэш 12 ч)
-db/schema.sql    таблицы jobs, health, settings
+src/leads/       поиск заказчиков: sources, enrich, score, drafts (Workers AI), store, bot
+db/schema.sql    таблицы jobs, health, settings, leads (+ db/migrations/)
 scripts/check.js локальный прогон источников и оценки
 ```
 
@@ -54,7 +73,7 @@ D1 `freelance-radar-bot` (id в `wrangler.toml`). Ключи `RUN_KEY`/`WEBHOOK_
 
 ## Команды бота
 
-`/top` — лучшие открытые за 2 дня · `/stats` — воронка · `/min 50` · `/mute` · `/sources` · `/help`
+`/top` — лучшие открытые за 2 дня · `/leads` — заказчики · `/stats` — воронка · `/min 50` · `/mute` · `/sources` · `/help`
 
 ## Запуск и публикация
 
@@ -74,4 +93,5 @@ curl "https://freelance-radar-bot.<subdomain>.workers.dev/setup?key=$(cat .run_k
 ```
 
 Ручной запуск: `GET /run?key=…&source=freelancer|peopleperhour|ytjobs|freelancehunt|kwork|digest|report|stats`,
+`leads:producthunt|leads:showhn|leads:hiring|leads:enrich&n=6|leads:preview` (подборка + письмо ИИ, без Telegram)|`leads:daily`,
 `&dry=1` — без записи и сообщений.
