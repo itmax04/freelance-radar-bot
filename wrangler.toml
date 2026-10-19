@@ -1,0 +1,24 @@
+name = "freelance-radar-bot"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Отдельный аккаунт Cloudflare (свои 5 cron, D1, лимиты) — не тот, где квартирный и iPhone-бот.
+# Время — UTC. Используется 2 из 5 cron.
+#   */2 * * * *  — один источник за запуск по кругу (см. CYCLE в src/index.js)
+#   1 * * * *    — сводки 9/13/17/21, отчёт 21:00 (Берлин), чистка базы 04:00
+[triggers]
+crons = ["*/2 * * * *", "1 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "freelance-radar-bot"
+database_id = "REPLACE_AFTER_d1_create"  # npx wrangler d1 create freelance-radar-bot
+
+[observability]
+enabled = true
+
+# Секреты (не хранятся в этом файле), вводит владелец: npx wrangler secret put <ИМЯ>
+#   TELEGRAM_TOKEN   — токен НОВОГО бота от @BotFather
+#   TELEGRAM_CHAT_ID — ваш Chat Id
+#   RUN_KEY          — ключ для ручного запуска /run?key=...
+#   WEBHOOK_SECRET   — секрет заголовка webhook Telegram

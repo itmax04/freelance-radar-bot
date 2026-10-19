@@ -1,0 +1,5 @@
+# Для локального запуска (npx wrangler dev). Скопируй в .dev.vars — он в .gitignore.
+TELEGRAM_TOKEN=000000:replace-me
+TELEGRAM_CHAT_ID=0
+RUN_KEY=local-test
+WEBHOOK_SECRET=local-secret
