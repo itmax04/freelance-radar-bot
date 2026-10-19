@@ -7,11 +7,12 @@ import { formatJob, jobKeyboard, formatDigest } from './messages.js';
 import { handleUpdate, COMMANDS, statsText, sourcesText } from './commands.js';
 
 // Cron (UTC), см. wrangler.toml:
-//   */2 * * * *  — один источник за запуск по кругу CYCLE (Freelancer.com — каждые 4 мин, остальные — каждые 20 мин)
+//   */2 * * * *  — один источник за запуск по кругу CYCLE (Freelancer.com — каждые 4 мин, PPH и YT Jobs — каждые 10, Freelancehunt — 20)
 //   1 * * * *    — сводки (9, 13, 17, 21 по Берлину), отчёт дня (21:00), чистка базы (04:00)
 const CRON_SOURCES = '*/2 * * * *';
 const CRON_HOURLY = '1 * * * *';
-const CYCLE = ['freelancer', 'peopleperhour', 'freelancer', 'ytjobs', 'freelancer', 'freelancehunt', 'freelancer', 'kwork', 'freelancer', 'peopleperhour'];
+// Kwork исключён: блокирует серверы Cloudflare (см. SOURCES.kwork.blocked).
+const CYCLE = ['freelancer', 'peopleperhour', 'freelancer', 'ytjobs', 'freelancer', 'freelancehunt', 'freelancer', 'ytjobs', 'freelancer', 'peopleperhour'];
 const DIGEST_HOURS = [9, 13, 17, 21];
 const REPORT_HOUR = 21;
 const MAX_SENDS_PER_RUN = 5;      // лимит подзапросов на запуск
@@ -173,7 +174,7 @@ export default {
       if (what === 'digest') return Response.json(await sendDigest(env));
       if (what === 'report') { await sendReport(env); return Response.json({ report: true }); }
       if (what === 'stats') return new Response(await statsText(env));
-      const keys = what ? [what] : Object.keys(SOURCES);
+      const keys = what ? [what] : Object.keys(SOURCES).filter((k) => !SOURCES[k].blocked);
       const out = [];
       for (const k of keys) {
         if (!SOURCES[k]) { out.push({ source: k, error: 'unknown source' }); continue; }

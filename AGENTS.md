@@ -5,7 +5,8 @@
 ## Контекст в одном абзаце
 
 Cloudflare Worker (JS, ES-модули, без сборки) ищет заказы на **всё, что связано с видео** (ИИ-видео/UGC, монтаж,
-моушн-дизайн, анимация, YouTube-монтаж) на Freelancer.com, PeoplePerHour, YT Jobs, Freelancehunt и Kwork, оценивает
+моушн-дизайн, анимация, YouTube-монтаж) на Freelancer.com, PeoplePerHour, YT Jobs и Freelancehunt (Kwork отключён:
+блокирует серверы Cloudflare — `SOURCES.kwork.blocked`; не обходить), оценивает
 их 0–100 и присылает в Telegram владельцу с готовым откликом. **Приоритет — иностранные заказчики**: местные
 (Kwork, Freelancehunt в гривнах) только в сводке, после иностранных. Данные — D1 (`DB`). Отдельный аккаунт
 Cloudflare (не тот, где `rostock-wohnung-bot` и `iphone-alert-bot`). Владелец общается по-русски; тексты бота —

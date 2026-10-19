@@ -12,7 +12,7 @@
 
 | Функция | Как |
 |---|---|
-| Источники | Freelancer.com (API, 53 видео-категории), PeoplePerHour (Video & Photography), YT Jobs (API, только Remote), Freelancehunt (API, 6 видео-навыков), Kwork (разделы 76, 77, 78, 300) |
+| Источники | Freelancer.com (API, 53 видео-категории), PeoplePerHour (Video & Photography), YT Jobs (API, только Remote), Freelancehunt (API, 6 видео-навыков). **Kwork** — код есть, но отключён: серверам Cloudflare отдаёт пустую страницу (защита от ботов) |
 | Приоритет | иностранные заказчики: +15 к оценке; местные (Kwork, Freelancehunt в UAH) — только в сводке, после иностранных |
 | Оценка 0–100 | направление (ИИ-видео/UGC 30, моушн 22, монтаж 22), реклама +8, регулярная работа +10, бюджет в USD по курсу НБУ, число откликов, свежесть, язык; признаки обмана −40 |
 | 🔥 сразу | оценка ≥ 65, иностранный, без ⚠️; не больше 25 в сутки и 5 за запуск; `/min` — порог бюджета, `/mute` — пауза |
@@ -27,8 +27,8 @@ Upwork и Fiverr закрыты для ботов).
 ## Расписание (UTC)
 
 ```
-*/2 * * * *  → один источник за запуск: CYCLE = fl, pph, fl, ytj, fl, fh, fl, kw, fl, pph
-               (Freelancer.com — каждые 4 мин, остальные — каждые 20 мин)
+*/2 * * * *  → один источник за запуск: CYCLE = fl, pph, fl, ytj, fl, fh, fl, ytj, fl, pph
+               (Freelancer.com — каждые 4 мин, PPH и YT Jobs — каждые 10, Freelancehunt — 20)
 1 * * * *    → сводки, отчёт 21:00, чистка 04:00 (по Берлину)
 ```
 
@@ -45,6 +45,12 @@ src/store.js     D1: заказы, статусы, здоровье, настр�
 db/schema.sql    таблицы jobs, health, settings
 scripts/check.js локальный прогон источников и оценки
 ```
+
+## Где работает
+
+Аккаунт Cloudflare **lashkevych049@gmail.com** (отдельный), Worker https://freelance-radar-bot.lashkevych049.workers.dev,
+D1 `freelance-radar-bot` (id в `wrangler.toml`). Ключи `RUN_KEY`/`WEBHOOK_SECRET` — в `.run_key`/`.webhook_secret`
+(не в git), API-токен — в `.env` (не в git). Замер 19.10.2026: обычный запуск ~9 мс CPU, первый проход источника ~16 мс.
 
 ## Команды бота
 

@@ -152,9 +152,11 @@ export async function fetchKwork(html) {
   const pages = html ? [html] : await Promise.all(KWORK_CATEGORIES.map((c) => get(`https://kwork.ru/projects?c=${c}`)));
   const seen = new Set();
   const out = [];
+  let parsedPages = 0;
   for (const page of pages) {
     const i = page.indexOf('"wantsListData"');
     if (i < 0) continue;
+    parsedPages++;
     const j = page.indexOf('"wants":[', i);
     if (j < 0) continue;
     // Вырезаем массив wants по балансу скобок — не парсим весь stateData (дорого по CPU).
@@ -189,6 +191,11 @@ export async function fetchKwork(html) {
       });
     }
   }
+  if (!parsedPages) {
+    // Вместо биржи пришла другая страница (блокировка облачных IP, капча) — не обходим, сообщаем.
+    const title = decode((pages[0].match(/<title>([^<]*)/i) || [])[1] || pages[0].slice(0, 80));
+    throw new Error(`нет списка заказов на странице: «${title.slice(0, 80)}»`);
+  }
   return out;
 }
 
@@ -197,5 +204,6 @@ export const SOURCES = {
   peopleperhour: { name: 'PeoplePerHour', fetch: fetchPeoplePerHour, foreign: true },
   ytjobs: { name: 'YT Jobs', fetch: fetchYtJobs, foreign: true },
   freelancehunt: { name: 'Freelancehunt', fetch: fetchFreelancehunt, foreign: false },
-  kwork: { name: 'Kwork', fetch: fetchKwork, foreign: false },
+  // Kwork (19.10.2026): на запросы из Cloudflare отдаёт пустую страницу (защита от ботов) — не обходим, в CYCLE нет.
+  kwork: { name: 'Kwork', fetch: fetchKwork, foreign: false, blocked: 'пустая страница для серверов Cloudflare (защита от ботов)' },
 };

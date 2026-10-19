@@ -15,7 +15,7 @@ export const COMMANDS = [
 ];
 
 const HELP = `<b>Радар заказов по видео</b>
-Бот каждые несколько минут проверяет Freelancer.com, PeoplePerHour, YT Jobs (иностранные заказчики — в приоритете), Freelancehunt и Kwork.
+Бот каждые несколько минут проверяет Freelancer.com, PeoplePerHour, YT Jobs (иностранные заказчики — в приоритете) и Freelancehunt. Kwork закрыт для серверов Cloudflare — отключён.
 
 🔥 — сильный заказ, приходит сразу. ⭐ — хороший, попадает в сводку (9:00, 13:00, 17:00, 21:00).
 Под заказом: <b>✍️ Отклик</b> — готовый текст (копируется нажатием), дальше отмечай ✉️ → 💬 → 🏆 или ❌.
@@ -120,6 +120,7 @@ export async function sourcesText(env) {
   const { results } = await env.DB.prepare('SELECT * FROM health').all();
   const by = Object.fromEntries(results.map((h) => [h.source, h]));
   const lines = Object.entries(SOURCES).map(([key, s]) => {
+    if (s.blocked) return `⛔ ${s.name}: отключён — ${e(s.blocked)}`;
     const h = by[key];
     if (!h) return `⏳ ${s.name}: ещё не проверялся`;
     const ok = h.fail_count === 0;

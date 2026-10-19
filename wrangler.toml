@@ -12,7 +12,7 @@ crons = ["*/2 * * * *", "1 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "freelance-radar-bot"
-database_id = "REPLACE_AFTER_d1_create"  # npx wrangler d1 create freelance-radar-bot
+database_id = "64c31581-2cda-4ce7-9aaa-94b2204ec2a3"
 
 [observability]
 enabled = true
