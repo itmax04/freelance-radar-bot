@@ -1,6 +1,6 @@
 // Обогащение лида: сайт → описание, публичные контакты, соцсети, есть ли видео, признаки страны, тип бизнеса.
 // Только публично опубликованные адреса (mailto/текст на сайте компании). Строковые операции — лимит CPU 10 мс.
-import { hostOf, isEuLegal } from './sources.js';
+import { hostOf, isEuLegal, isGermanLegal } from './sources.js';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36';
 const MAX_HTML = 400_000;
@@ -53,22 +53,25 @@ const CONTACT_LINK = /href=["']([^"']*(?:\/contact|\/contact-us|\/get-in-touch|\
 const B2C = /\b(app|apps|shop|store|brand|skincare|beauty|fitness|wellness|health|food|drink|coffee|pet|fashion|apparel|jewelry|home|kitchen|baby|kids|travel|game|games|dating|music|creator|e-?commerce|subscription box|supplement|cosmetic)\b/i;
 const B2B = /\b(saas|b2b|api|platform|developers?|teams?|enterprise|workflow|crm|analytics|automation|infrastructure|dashboard|agents?|sdk|devops|compliance|security)\b/i;
 
-// Страна по сайту: ЕС — исключаем; США/UK/CA/AU — приоритет.
+// Страна по сайту: Германия — исключаем; остальной ЕС — помечаем; США/UK/CA/AU — приоритет.
 function countryHints(html, host) {
   const tld = (host || '').split('.').pop();
-  const EU_TLD = ['de', 'at', 'ch', 'fr', 'es', 'it', 'nl', 'be', 'pl', 'pt', 'ie', 'se', 'dk', 'fi', 'no', 'cz', 'sk', 'hu', 'ro', 'bg', 'gr', 'hr', 'si', 'ee', 'lv', 'lt', 'lu', 'mt', 'cy', 'eu'];
-  if (EU_TLD.includes(tld)) return { country: tld.toUpperCase(), eu: true };
-  if (['uk'].includes(tld)) return { country: 'UK', eu: false };
-  if (['ca'].includes(tld)) return { country: 'CA', eu: false };
-  if (['au'].includes(tld)) return { country: 'AU', eu: false };
-  if (['nz'].includes(tld)) return { country: 'NZ', eu: false };
+  const EU_TLD = ['at', 'fr', 'es', 'it', 'nl', 'be', 'pl', 'pt', 'ie', 'se', 'dk', 'fi', 'cz', 'sk', 'hu', 'ro', 'bg', 'gr', 'hr', 'si', 'ee', 'lv', 'lt', 'lu', 'mt', 'cy', 'eu'];
+  if (tld === 'de') return { country: 'DE', eu: true, germany: true };
+  if (EU_TLD.includes(tld)) return { country: tld.toUpperCase(), eu: true, germany: false };
+  if (tld === 'uk') return { country: 'UK', eu: false, germany: false };
+  if (tld === 'ca') return { country: 'CA', eu: false, germany: false };
+  if (tld === 'au') return { country: 'AU', eu: false, germany: false };
+  if (tld === 'nz') return { country: 'NZ', eu: false, germany: false };
   const foot = html.slice(-40000);
-  if (/\bimpressum\b/i.test(foot) || isEuLegal(decode(foot.replace(/<[^>]+>/g, ' ')).slice(-3000))) return { country: 'EU?', eu: true };
-  if (/\b(Pty Ltd|Australia)\b/.test(foot)) return { country: 'AU', eu: false };
-  if (/\b(Ltd\.?|Limited|United Kingdom|London)\b/.test(foot)) return { country: 'UK', eu: false };
-  if (/\b(Inc\.?|LLC|Corp\.?|Delaware|San Francisco|New York|California|Texas|USA|United States)\b/.test(foot)) return { country: 'US', eu: false };
-  if (/\b(Canada|Toronto|Vancouver|Montreal)\b/.test(foot)) return { country: 'CA', eu: false };
-  return { country: null, eu: false };
+  const footText = decode(foot.replace(/<[^>]+>/g, ' ')).slice(-3000);
+  if (isGermanLegal(footText) || /\b(Deutschland|Germany)\b/.test(footText) && /\bimpressum\b/i.test(foot)) return { country: 'DE?', eu: true, germany: true };
+  if (/\bimpressum\b/i.test(foot) || isEuLegal(footText)) return { country: 'ЕС?', eu: true, germany: false };
+  if (/\b(Pty Ltd|Australia)\b/.test(foot)) return { country: 'AU', eu: false, germany: false };
+  if (/\b(Ltd\.?|Limited|United Kingdom|London)\b/.test(foot)) return { country: 'UK', eu: false, germany: false };
+  if (/\b(Inc\.?|LLC|Corp\.?|Delaware|San Francisco|New York|California|Texas|USA|United States)\b/.test(foot)) return { country: 'US', eu: false, germany: false };
+  if (/\b(Canada|Toronto|Vancouver|Montreal)\b/.test(foot)) return { country: 'CA', eu: false, germany: false };
+  return { country: null, eu: false, germany: false };
 }
 
 /** Сайт компании со страницы Product Hunt (ссылка с ?ref=producthunt). */
@@ -79,7 +82,7 @@ export async function websiteFromProductHunt(pageUrl) {
 }
 
 export async function enrichLead(lead) {
-  const out = { emails: [], contactUrl: null, socials: {}, hasVideo: null, siteTitle: null, siteDesc: null, country: null, eu: Boolean(lead.eu), kind: null, error: null };
+  const out = { emails: [], contactUrl: null, socials: {}, hasVideo: null, siteTitle: null, siteDesc: null, country: null, eu: Boolean(lead.eu), germany: Boolean(lead.germany), kind: null, error: null };
   let website = lead.website;
   try {
     if (!website && lead.source === 'producthunt' && lead.pageUrl) website = await websiteFromProductHunt(lead.pageUrl);
@@ -99,6 +102,7 @@ export async function enrichLead(lead) {
     out.hasVideo = VIDEO_ON_SITE.test(html);
     Object.assign(out, countryHints(html, fhost));
     if (lead.eu) out.eu = true;
+    if (lead.germany) out.germany = true;
     const text = `${lead.desc || ''} ${out.siteTitle} ${out.siteDesc}`;
     out.kind = B2C.test(text) && !/\b(b2b|saas|enterprise|developers?|api)\b/i.test(text) ? 'b2c' : B2B.test(text) ? 'b2b' : 'other';
     // Почты нет на главной — пробуем страницу контактов (ещё 1 запрос).

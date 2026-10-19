@@ -1,5 +1,5 @@
 // Оценка потенциального заказчика 0–100: насколько вероятно, что ему нужно видео и что до него можно достучаться.
-// ЕС (и Германия) исключены полностью: холодные письма там запрещены без согласия, владелец не работает на ЕС.
+// Страны не исключаются (решение владельца 19.10.2026). Германия и ЕС помечаются: другой канал связи (см. bestChannel).
 
 export const LEADS_PER_DAY = 10;
 export const MIN_LEAD_SCORE = 35;
@@ -12,7 +12,8 @@ const VIDEO_ROLE = /\b(ugc|video|motion|animat\w*|creative strategist|content cr
 export function scoreLead(lead, info) {
   const reasons = [];
   let score = 0;
-  if (info.eu || lead.eu) return { score: 0, reasons: ['ЕС — не пишем'], excluded: true };
+  const germany = Boolean(info.germany || lead.germany);
+  const eu = Boolean(info.eu || lead.eu) && !germany;
   if (lead.signal === 'hiring' && RECRUITER.test(lead.company || '')) return { score: 0, reasons: ['кадровое агентство'], excluded: true };
 
   if (lead.signal === 'hiring') {
@@ -38,6 +39,8 @@ export function scoreLead(lead, info) {
   else { score -= 10; reasons.push('нет контактов'); }
 
   if (['US', 'UK', 'CA', 'AU', 'NZ'].includes(info.country)) { score += 8; reasons.push(info.country); }
+  if (germany) reasons.push('Германия');
+  else if (eu) reasons.push('ЕС');
   if (lead.postedAt && Date.now() - lead.postedAt > 14 * 86400e3) { score -= 15; reasons.push('старое'); }
 
   return { score: Math.max(0, Math.min(100, score)), reasons, excluded: false };
@@ -46,11 +49,22 @@ export function scoreLead(lead, info) {
 /** Какой канал предложить. США + почта: по CAN-SPAM в коммерческом письме нужен почтовый адрес отправителя. */
 export function bestChannel(lead, info, { hasPostalAddress = false } = {}) {
   if (lead.signal === 'hiring' && lead.applyUrl) return { kind: 'apply', url: lead.applyUrl, label: 'отклик на вакансию' };
+  // США: CAN-SPAM требует почтовый адрес отправителя; ЕС: правила рекламных писем зависят от страны →
+  // в обоих случаях сначала форма/DM, почта — запасной вариант с пометкой.
   const usEmailBlocked = info.country === 'US' && !hasPostalAddress;
-  if (info.emails?.length && !usEmailBlocked) return { kind: 'email', to: info.emails[0], label: `почта ${info.emails[0]}` };
+  const germany = Boolean(info.germany || lead.germany);
+  const euCaution = Boolean(info.eu || lead.eu) || germany;
+  // Германия (UWG §7, владелец живёт в DE — закон применяется напрямую): реклама по почте/через формы без согласия
+  // запрещена, риск Abmahnung → только вакансия (обработано выше) или LinkedIn/X.
+  if (germany) {
+    if (info.socials?.linkedin) return { kind: 'dm', url: info.socials.linkedin, label: 'LinkedIn (Германия: без писем и форм — UWG §7)' };
+    if (info.socials?.x) return { kind: 'dm', url: info.socials.x, label: 'сообщение в X (Германия: без писем и форм — UWG §7)' };
+    return { kind: 'none', label: 'Германия: писать на почту/в форму без согласия нельзя (UWG §7) — только если сами ищут подрядчика' };
+  }
+  if (info.emails?.length && !usEmailBlocked && !euCaution) return { kind: 'email', to: info.emails[0], label: `почта ${info.emails[0]}` };
   if (info.contactUrl) return { kind: 'form', url: info.contactUrl, label: 'форма на сайте' };
   if (info.socials?.x) return { kind: 'dm', url: info.socials.x, label: 'сообщение в X' };
   if (info.socials?.linkedin) return { kind: 'dm', url: info.socials.linkedin, label: 'LinkedIn' };
-  if (info.emails?.length) return { kind: 'email', to: info.emails[0], label: `почта ${info.emails[0]} (США: нужен почтовый адрес в письме)` };
+  if (info.emails?.length) return { kind: 'email', to: info.emails[0], label: `почта ${info.emails[0]} (${euCaution ? 'ЕС: проверь правила рекламных писем в стране' : 'США: нужен почтовый адрес в письме'})` };
   return { kind: 'none', label: 'контактов нет' };
 }

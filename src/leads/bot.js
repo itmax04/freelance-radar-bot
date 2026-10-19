@@ -1,5 +1,5 @@
 // Поиск заказчиков: сбор → обогащение → ежедневная подборка → черновики → напоминания.
-import { LEAD_SOURCES } from './sources.js';
+import { LEAD_SOURCES, isEuLocation } from './sources.js';
 import { enrichLead } from './enrich.js';
 import { scoreLead, bestChannel, LEADS_PER_DAY, MIN_LEAD_SCORE } from './score.js';
 import { draftEmail, draftShort, draftDemo, followUpText } from './drafts.js';
@@ -27,7 +27,7 @@ export async function runLeadSource(env, key) {
   const known = await knownLeadIds(env, leads.map((l) => l.id));
   const fresh = leads.filter((l) => !known.has(l.id));
   await insertRawLeads(env, fresh);
-  return { leads: key, total: leads.length, fresh: fresh.length, eu: fresh.filter((l) => l.eu).length };
+  return { leads: key, total: leads.length, fresh: fresh.length, eu: fresh.filter((l) => l.eu).length, germany: fresh.filter((l) => l.germany).length };
 }
 
 export async function runEnrich(env, launches = ENRICH_LAUNCHES) {
@@ -35,8 +35,8 @@ export async function runEnrich(env, launches = ENRICH_LAUNCHES) {
   const hasPostalAddress = Boolean(await getSetting(env, 'postalAddress', null));
   const done = [];
   for (const row of raw) {
-    const lead = { ...row, desc: row.descr, pageUrl: row.page_url, applyUrl: row.apply_url, signalText: row.signal_text, postedAt: row.posted_at };
-    const info = row.signal === 'hiring' ? { emails: [], socials: {}, country: null, eu: false } : await enrichLead(lead);
+    const lead = { ...row, desc: row.descr, pageUrl: row.page_url, applyUrl: row.apply_url, signalText: row.signal_text, postedAt: row.posted_at, eu: isEuLocation(row.country) };
+    const info = row.signal === 'hiring' ? { emails: [], socials: {}, country: null, eu: lead.eu, germany: false } : await enrichLead(lead);
     const s = scoreLead(lead, info);
     const ch = bestChannel(lead, info, { hasPostalAddress });
     await saveEnriched(env, row, info, s, ch);
@@ -60,7 +60,11 @@ export function formatLead(l, rank) {
     l.contact_url && `<a href="${e(l.contact_url)}">форма</a>`,
   ].filter(Boolean).join(' · ');
   const facts = [l.country && `🌍 ${e(l.country)}`, KIND[l.kind], l.has_video === 0 && 'видео на сайте нет'].filter(Boolean).join(' · ');
-  const usNote = l.country === 'US' && l.emails ? '\n📮 США: по закону CAN-SPAM в рекламном письме нужен почтовый адрес отправителя — пока лучше форма/DM.' : '';
+  const deLead = /Германия/.test(l.reasons || '');
+  const euLead = /ЕС/.test(l.reasons || '');
+  const usNote = l.country === 'US' && l.emails ? '\n📮 США: по закону CAN-SPAM в рекламном письме нужен почтовый адрес отправителя — пока лучше форма/DM.'
+    : deLead ? '\n🇩🇪 Германия: рекламные письма и сообщения через форму без согласия запрещены (UWG §7), закон применяется к тебе напрямую — только отклик на их вакансию или LinkedIn.'
+    : euLead ? '\n🇪🇺 ЕС: правила рекламных писем компаниям зависят от страны — надёжнее отклик на вакансию, форма или LinkedIn.' : '';
   const status = l.status !== 'new' ? `\nСтатус: ${LEAD_STATUSES[l.status]?.label}` : '';
   return `${SIGNAL_ICON[l.signal] || '•'} ${rank ? `${rank}. ` : ''}<b>${e(l.company)}</b>
 ${e(l.signal_text || '')}

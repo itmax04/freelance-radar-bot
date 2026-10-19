@@ -1,5 +1,5 @@
 // Источники потенциальных заказчиков (компаний, которым может быть нужно видео).
-// Общий формат лида: { id, source, company, website?, host?, signal, signalText, desc, maker?, applyUrl?, country? }
+// Общий формат лида: { id, source, company, website?, host?, signal, signalText, desc, maker?, applyUrl?, country?, eu?, germany? }
 //   signal: 'launch' — только что запустились; 'hiring' — нанимают на видео/контент; 'ads' — крутят рекламу (позже)
 // Защиту сайтов не обходим: Kickstarter, Indiegogo, LaunchingNext, страницы компаний Himalayas — 403, не используются.
 
@@ -76,14 +76,22 @@ export async function fetchShowHN() {
 // ---------- Вакансии на видео/контент: компания уже платит за видео → предлагаем фриланс ----------
 const HIRING_ROLE = /\b(ugc|video|videographer|motion|animator|animation|content creator|content producer|social media|creative strategist|tiktok|youtube|editor|post[- ]production|brand designer)\b/i;
 const NOT_ROLE = /\b(engineer|engineering|developer|devops|data|account(ant|ing)|sales|support|recruit\w*|nurse|teacher|dean|lawyer|legal|finance|planning|sponsorships?|program manager)\b/i;
-// ЕС и Германия исключены: в ЕС холодные письма запрещены без согласия (в Германии UWG §7), владелец не работает на ЕС.
-export const EU_COUNTRIES = ['germany', 'austria', 'switzerland', 'france', 'spain', 'italy', 'netherlands', 'belgium', 'poland',
-  'portugal', 'ireland', 'sweden', 'denmark', 'finland', 'norway', 'czech', 'slovakia', 'hungary', 'romania', 'bulgaria',
-  'greece', 'croatia', 'slovenia', 'estonia', 'latvia', 'lithuania', 'luxembourg', 'malta', 'cyprus', 'europe', 'eu'];
-// Правовые формы ЕС. Короткие (AG, AB, AS, Oy, ApS) — только заглавными, иначе ловят английские «as», «ag».
-const EU_LEGAL_RE = /\b(gmbh|ug \(haftungsbeschr|b\.v\.|s\.l\.|sarl|s\.r\.l\.|srl|kft|sp\. z o\.o\.|e\.k\.)(?=\W|$)/i;
-const EU_LEGAL_CASE = /\b(AG|AB|AS|ApS|Oy|BV|SAS|UG)\b/;
+// Страны НЕ исключаем (решение владельца 19.10.2026: и ЕС, и Германию). Помечаем: Германия — UWG §7 (реклама по
+// почте/через формы без согласия запрещена) → только вакансия/LinkedIn; ЕС — правила зависят от страны → отклик/форма/DM.
+export const EU_COUNTRIES = ['austria', 'france', 'spain', 'italy', 'netherlands', 'belgium', 'poland', 'portugal', 'ireland',
+  'sweden', 'denmark', 'finland', 'czech', 'slovakia', 'hungary', 'romania', 'bulgaria', 'greece', 'croatia', 'slovenia',
+  'estonia', 'latvia', 'lithuania', 'luxembourg', 'malta', 'cyprus', 'europe', 'eu'];
+const GERMANY = ['germany', 'deutschland'];
+// Правовые формы. Короткие (AG, AB, AS, Oy, ApS…) — только заглавными, иначе ловят английские «as», «ag».
+const GERMAN_LEGAL = /\b(gmbh|ug \(haftungsbeschr\w*\)|e\.k\.|gbr|mbh)(?=\W|$)|\bUG\b/i;
+const EU_LEGAL_RE = /\b(b\.v\.|s\.l\.|sarl|s\.r\.l\.|srl|kft|sp\. z o\.o\.)(?=\W|$)/i;
+const EU_LEGAL_CASE = /\b(AB|AS|ApS|Oy|BV|SAS)\b/;
+export const isGermanLegal = (name) => GERMAN_LEGAL.test(name || '');
 export const isEuLegal = (name) => EU_LEGAL_RE.test(name || '') || EU_LEGAL_CASE.test(name || '');
+const words = (list) => list.map((c) => String(c).toLowerCase().trim());
+/** Германия: немецкая правовая форма или работа только в Германии. */
+export const isGermany = (company, locs) => isGermanLegal(company) || (locs.length > 0 && words(locs).every((c) => GERMANY.includes(c)));
+export const isEuLocation = (text) => EU_COUNTRIES.some((c) => new RegExp(`\\b${c}\\b`, 'i').test(text || ''));
 
 const HIMALAYAS_QUERIES = ['video editor', 'ugc', 'motion designer', 'content creator', 'animator', 'creative strategist'];
 
@@ -115,7 +123,8 @@ export async function fetchHiring() {
       signalText: `ищут «${j.title}»${where ? ` (${where})` : ''}`,
       desc: decode(j.excerpt || j.description || '').slice(0, 600),
       country: where,
-      eu: isEuLegal(j.companyName) || (j.locationRestrictions || []).some((c) => EU_COUNTRIES.includes(String(c).toLowerCase())),
+      germany: isGermany(j.companyName, j.locationRestrictions || []),
+      eu: isEuLegal(j.companyName) || isEuLocation(where),
       postedAt: j.pubDate ? j.pubDate * 1000 : null,
     });
   }
@@ -132,7 +141,8 @@ export async function fetchHiring() {
       signalText: `ищут «${x.position}»${x.location ? ` (${x.location})` : ''}`,
       desc: decode(x.description || '').slice(0, 600),
       country: x.location || '',
-      eu: isEuLegal(x.company) || EU_COUNTRIES.some((c) => new RegExp(`\\b${c}\\b`, 'i').test(x.location || '')),
+      germany: isGermany(x.company, x.location ? x.location.split(/[,/]/) : []),
+      eu: isEuLegal(x.company) || isEuLocation(x.location),
       postedAt: x.epoch ? x.epoch * 1000 : null,
     });
   }

@@ -29,7 +29,7 @@ export async function insertRawLeads(env, leads) {
     descr, maker, posted_at, country, stage, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   await env.DB.batch(leads.map((l) => stmt.bind(l.id, l.source, (l.company || '?').slice(0, 120), companyKey(l), l.website, l.pageUrl,
     l.applyUrl || null, l.signal, l.signalText, (l.desc || '').slice(0, 800), l.maker || null, l.postedAt, l.country || null,
-    l.eu ? 'excluded' : 'raw', now, now)));
+    'raw', now, now)));
 }
 
 /** Очередь на обогащение: запуски (нужен сайт — до 3 запросов на лид) и вакансии (без запросов) отдельно. */
